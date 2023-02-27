@@ -47,7 +47,10 @@ jobs:
       id: meta
       uses: docker/metadata-action@v4.3.0
       with:
-        images: my-docker-hub-namespace/my-docker-hub-repository
+        images: yntelectual/gh-metrics-exporter
+        flavor: latest=true
+        tags: |
+          type=ref,event=branch
         
     - name: Build and push Docker image
       uses: docker/build-push-action@v4.0.0
