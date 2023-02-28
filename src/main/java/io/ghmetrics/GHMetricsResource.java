@@ -15,6 +15,7 @@ import org.eclipse.microprofile.rest.client.inject.RestClient;
 
 import javax.annotation.PostConstruct;
 import javax.enterprise.context.ApplicationScoped;
+import javax.enterprise.inject.Instance;
 import javax.inject.Inject;
 import javax.ws.rs.GET;
 import javax.ws.rs.Path;
@@ -47,11 +48,13 @@ public class GHMetricsResource {
     @Inject
     MeterRegistry registry;
     @Inject
-    DynamoRepoService repo;
+    Instance<RepoService> repo;
 
     @PostConstruct
     public void init() {
-        this.getWorkflows();
+        repo.get().init().subscribe().with(unused -> {
+            log.info("Repo initialized");
+        });
 
         Gauge.builder("wf.status", 0d, value -> wfStatusCountMap.getOrDefault(WorkflowRun.StatusEnum.QUEUED.name(),0))
                 .tags(Tags.of(Tag.of("repo", githubRepo), Tag.of("status", WorkflowRun.StatusEnum.QUEUED.name())))
@@ -67,7 +70,7 @@ public class GHMetricsResource {
 
     @GET
     public Uni<List<Record>> dump() {
-        return repo.list();
+        return repo.get().list();
     }
 
     @GET
@@ -95,7 +98,6 @@ public class GHMetricsResource {
                     .isBefore(lastInProgressJob.get())) {
                 lastInProgressJob.set(workflowRun.getCreatedAt());
             }
-            log.info("run {} - {}", workflowRun.getId(), workflowRun.getStatus());
             // track number of runs per status
             wfStatusCountMap.compute(workflowRun.getStatus().name(), (s, integer) -> integer != null ? integer + 1 : 1);
 
@@ -104,6 +106,7 @@ public class GHMetricsResource {
                 if (record == null) {
                     return;
                 }
+                // for every completed run, record 3 timers - queue time, exec time and total time
                 log.info("Workflow completed: {} {} - created {} started {}(queue {}s) completed {}(execution {}s)", record.getId(), record.getWorkflowName(),
                         record.getCreatedAt(),record.getStartedAt(),record.getQueueTime(), record.getCompletedAt(), record.getActualExecutionTime());
                 registry.timer("wf.run.total", Tags.of(Tag.of("workflow", record.getWorkflowName()),
@@ -123,14 +126,20 @@ public class GHMetricsResource {
     @GET
     @Path("workflows")
     public Response getWorkflows() {
-        api.actionsListRepoWorkflows(owner, githubRepo, 100L, 0L).getWorkflows().forEach(workflow -> {
-            wfMap.put(workflow.getId(), workflow.getName());
-        });
+        refreshWorkflows();
         return Response.ok(wfMap).build();
     }
 
+    @Scheduled(concurrentExecution = Scheduled.ConcurrentExecution.SKIP, every = "1m")
+    public void refreshWorkflows() {
+        log.info("Loading workflow definitions from Github {}/{}", owner, githubRepo);
+        api.actionsListRepoWorkflows(owner, githubRepo, 100L, 0L).getWorkflows().forEach(workflow -> {
+            wfMap.put(workflow.getId(), workflow.getName());
+        });
+    }
+
     private Uni<Record> process(WorkflowRun wf) {
-        return repo.get(wf.getId())
+        return repo.get().get(wf.getId())
                 .replaceIfNullWith(createNewReport(wf))
                 .map(record -> {
                     if (wf.getStatus().name().equals(record.getStatus())) {
@@ -164,7 +173,7 @@ public class GHMetricsResource {
                     }
                     record.setStatus(wf.getStatus().name());
                     return record;
-                }).onItem().ifNotNull().call(repo::put)
+                }).onItem().ifNotNull().call(rec -> repo.get().put(rec))
                 .onItem().ifNotNull().transform(
                         record -> {
                             if (record.getCompletedAt() != null && null != record.getConclusion()) {

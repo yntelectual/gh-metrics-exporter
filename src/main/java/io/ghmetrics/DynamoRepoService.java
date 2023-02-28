@@ -1,6 +1,7 @@
 package io.ghmetrics;
 
 import io.micrometer.core.annotation.Timed;
+import io.quarkus.arc.lookup.LookupIfProperty;
 import io.quarkus.runtime.Startup;
 import io.smallrye.mutiny.Uni;
 import lombok.extern.slf4j.Slf4j;
@@ -10,13 +11,13 @@ import software.amazon.awssdk.enhanced.dynamodb.Key;
 import software.amazon.awssdk.enhanced.dynamodb.TableSchema;
 import software.amazon.awssdk.services.dynamodb.DynamoDbAsyncClient;
 
-import javax.inject.Singleton;
+import javax.enterprise.context.ApplicationScoped;
 import java.util.List;
 
-@Startup
-@Singleton
+@LookupIfProperty(name = "repo.type", stringValue = "dynamodb")
+@ApplicationScoped
 @Slf4j
-public class DynamoRepoService {
+public class DynamoRepoService implements RepoService {
     private DynamoDbAsyncTable<Record> recordTable;
     private DynamoDbEnhancedAsyncClient enhancedAsyncClient;
 
@@ -27,7 +28,12 @@ public class DynamoRepoService {
         recordTable = enhancedAsyncClient.table("GithubRuns",
                 TableSchema.fromClass(Record.class));
 
-        recordTable.describeTable().whenComplete((describeTableEnhancedResponse, throwable) -> {
+
+    }
+
+    @Override
+    public Uni<Void> init() {
+        return Uni.createFrom().future(recordTable.describeTable().whenComplete((describeTableEnhancedResponse, throwable) -> {
             log.info("Dynamo table exists alread {}", describeTableEnhancedResponse);
         }).exceptionally(throwable -> {
             if (throwable.getMessage().contains("ResourceNotFoundException")) {
@@ -43,19 +49,23 @@ public class DynamoRepoService {
                 throw new IllegalStateException("Cant describe dynamo DB table {}", throwable);
             }
             return null;
-        });
+        })).flatMap(describeTableEnhancedResponse -> Uni.createFrom().voidItem());
     }
 
     @Timed("dynamo.put")
+    @Override
     public Uni<Void> put(Record rec) {
         return Uni.createFrom().future(recordTable.putItem(rec));
     }
 
     @Timed("dynamo.get")
+    @Override
     public Uni<Record> get(Long id) {
         return Uni.createFrom().future(recordTable.getItem(r -> r.key(Key.builder().partitionValue(id).build())));
     }
 
+    @Override
+    @Timed("dynamo.list")
     public Uni<List<Record>> list() {
         return Uni.createFrom().publisher(recordTable.scan()).onItem().transform(recordPage -> recordPage.items());
     }
