@@ -86,12 +86,13 @@ public class GHMetricsResource {
         String createdParam = lastInProgressJob != null ? ">=" + lastInProgressJob.get()
                 .format(DateTimeFormatter.ISO_DATE_TIME) : null;
 
-        log.info("Timer tick, fetching Github runs created with 'created_at'='{}''}", createdParam);
+        log.info("Timer tick, fetching Github runs created with 'created_at'='{}'}", createdParam);
         ActionsListRequiredWorkflowRuns200Response runs = api.actionsListWorkflowRunsForRepo(owner, githubRepo, null, null,
                 null, null, 100L, null, createdParam, null, null, null);
         if (lastInProgressJob == null) {
             lastInProgressJob = new AtomicReference<>(OffsetDateTime.now());
         }
+        wfStatusCountMap.clear();
         runs.getWorkflowRuns().stream().forEach(workflowRun -> {
             // find oldest non-complete workflow run in the results
             if (!workflowRun.getStatus().equals(WorkflowRun.StatusEnum.COMPLETED) && workflowRun.getCreatedAt()
@@ -120,7 +121,7 @@ public class GHMetricsResource {
                         .record(record.getQueueTime(), TimeUnit.SECONDS);
             });
         });
-        log.info("====== total status {}", wfStatusCountMap);
+        log.info("Results by status: {}", wfStatusCountMap);
     }
 
     @GET
@@ -136,6 +137,7 @@ public class GHMetricsResource {
         api.actionsListRepoWorkflows(owner, githubRepo, 100L, 0L).getWorkflows().forEach(workflow -> {
             wfMap.put(workflow.getId(), workflow.getName());
         });
+        log.info("Got {} workflows", wfMap);
     }
 
     private Uni<Record> process(WorkflowRun wf) {

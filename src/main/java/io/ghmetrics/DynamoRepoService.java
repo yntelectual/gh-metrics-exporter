@@ -34,7 +34,7 @@ public class DynamoRepoService implements RepoService {
     @Override
     public Uni<Void> init() {
         return Uni.createFrom().future(recordTable.describeTable().whenComplete((describeTableEnhancedResponse, throwable) -> {
-            log.info("Dynamo table exists alread {}", describeTableEnhancedResponse);
+            log.info("Dynamo table exists already {}", describeTableEnhancedResponse);
         }).exceptionally(throwable -> {
             if (throwable.getMessage().contains("ResourceNotFoundException")) {
                 log.info("Table GithubRuns does not exist yet, creating now...");
